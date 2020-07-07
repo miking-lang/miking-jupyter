@@ -18,7 +18,7 @@ for creating embedded domain-specific and general-purpose languages"""
 
     def __init__(self, **kwargs):
         Kernel.__init__(self, **kwargs)
-        self.wrapper = replwrap.REPLWrapper("miking repl --no-line-edit", ">> ", None, continuation_prompt=" | ")
+        self.wrapper = replwrap.REPLWrapper("mi repl --no-line-edit", ">> ", None, continuation_prompt=" | ")
 
     def do_execute(self, code, silent, store_history=True, user_expressions=None,
                    allow_stdin=False):

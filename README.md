@@ -37,12 +37,12 @@ To try out the kernel, you will need the following dependencies:
 - The Miking bootstrap interpreter REPL. This should be available at the
   `develop` branch of the
   [main Miking repo](https://github.com/miking-lang/miking). Note that the
-  bootstrap interpreter needs to be available in `PATH` under the name `miking`.
+  bootstrap interpreter needs to be available in `PATH` under the name `mi`.
 
 ### Getting started
 
 Make sure you have all dependencies installed, and that the MCore bootstrap
-interpreter `miking` is in your `PATH`. Then, run the following command from the
+interpreter `mi` is in your `PATH`. Then, run the following command from the
 project root directory to install the kernel.
 
 ```
