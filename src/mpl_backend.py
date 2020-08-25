@@ -1,3 +1,11 @@
+# mpl_backend.py
+#
+# This file contains a backend for matplotlib to send plots to the Jupyter
+# frontend. The module _mcore_kernel is inserted by the MCore Jupyter kernel
+# and provides the ocaml_show function which takes an image as byte data and
+# displays it in the Jupyter frontend. It also provides the after_exec function,
+# which we use to display plots after a code cell is evaluated.
+
 import matplotlib
 import _mcore_kernel
 from matplotlib.backends.backend_agg import FigureCanvasAgg

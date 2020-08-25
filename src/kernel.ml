@@ -1,3 +1,16 @@
+(* kernel.ml
+ *
+ * This file contains a Jupyter kernel for the Miking core language, MCore. In
+ * the future, it should also provide automatic support for DSLs defined using
+ * the Miking system.
+ *
+ * The implementation relies on the [Jupyter_kernel] package, which provides the
+ * functions [Client.Kernel.make] for defining a Jupyter kernel, and
+ * [Client_main.main] for running such a kernel.
+ *
+ * The main functions of the implementation are [init], [exec] and [complete].
+ *)
+
 open Jupyter_kernel
 open Boot.Repl
 open Boot.Eval
@@ -6,9 +19,14 @@ open Printf
 
 let to_utf8 = Boot.Ustring.to_utf8
 
+(* [current_output] is a buffer for capturing prints from the Mcore interpreter
+  and Python process *)
 let current_output = ref (BatIO.output_string ())
-let other_actions = ref []
 
+(* [rich_results] stores rich results from code cells such as plots *)
+let rich_results = ref []
+
+(* Globals for handling IPM visualization *)
 let ipm_port = ref 0
 let ipm_start_signal = Lwt_mvar.create_empty ()
 let ipm_start_response = Lwt_mvar.create_empty ()
@@ -17,9 +35,6 @@ let peek_mvar mvar =
   Lwt_mvar.take mvar >>= fun x ->
   Lwt_mvar.put mvar x >>= fun _ ->
   Lwt.return x
-
-let text_data_of_string str =
-  Client.Kernel.mime ~ty:"text/plain" str
 
 let kernel_output_string str = BatIO.nwrite !current_output str
 let kernel_output_ustring ustr = ustr |> to_utf8 |> kernel_output_string
@@ -43,6 +58,8 @@ class OCamlPrint:
 
 sys.stdout = OCamlPrint()"
 
+(* Set the PYTHONPATH to include our matplotlib backend, and set the MPLBACKEND
+  environment variable to point to it *)
 let init_py_mpl () =
   ignore @@ Py.Run.eval ~start:Py.File "
 import os, sys
@@ -50,11 +67,17 @@ sys.path.append(os.path.expanduser('~') + '/.local/lib/mcore/kernel')
 os.environ['MPLBACKEND']='module://mpl_backend'";
   let py_ocaml_show args =
     let data = Py.String.to_string args.(0) in
-    other_actions := Client.Kernel.mime ~base64:true ~ty:"image/png" data :: !other_actions;
+    rich_results := Client.Kernel.mime ~base64:true ~ty:"image/png" data :: !rich_results;
     Py.none
   in
   Py.Module.set_function ocaml_module "ocaml_show" py_ocaml_show
 
+(* Initialize everything needed for running the kernel. In particular,
+  the [program_output] function is modified to make MCore prints be displayed
+  by the frontend, and the [after_exec] hook is introduced in the Python
+  environment to allow matplotlib to trigger plot redrawing after a cell has
+  been executed.
+  *)
 let init () =
   initialize_envs ();
   Boot.Mexpr.program_output := kernel_output_ustring;
@@ -67,6 +90,13 @@ let parse_and_eval count code =
   parse_prog_or_mexpr (sprintf "In [%d]" count) code
   |> repl_eval_ast
 
+(* Run visualization of a cell with %%visualize directive.
+  Uses [ipm_start_signal] to start the server the first time and
+  [ipm_start_response] to keep track of whether the server was started
+  successfully.
+  Sends the output of the cell to the visualization server, then embeds the
+  webpage served by the IPM server into the output cell.
+  *)
 let visualize_model count code =
   let raise_error = Boot.Msg.raise_error in
   (if Lwt_mvar.is_empty ipm_start_signal then
@@ -86,7 +116,7 @@ let visualize_model count code =
     let iframe_str = sprintf {|<embed src="http://localhost:%d/" width="100%%" height="400"</embed>|} !ipm_port in
     let uri = Uri.of_string (sprintf "http://localhost:%d/js/data-source.json" !ipm_port) in
     let body = Cohttp_lwt.Body.of_string model_str in
-    other_actions := Client.Kernel.mime ~ty:"text/html" iframe_str :: !other_actions;
+    rich_results := Client.Kernel.mime ~ty:"text/html" iframe_str :: !rich_results;
     Lwt.catch
       (fun () -> Cohttp_lwt_unix.Client.post ~body uri >|= fun _ -> None)
       (function
@@ -133,6 +163,9 @@ let evaluate_cell count code =
        |> repl_format
        |> Option.map to_utf8
 
+(* Execute [code] from cell number [count] and return the results. After
+  evaluating the code, run the [after_exec] hook and empty the [rich_results]
+  list. *)
 let exec ~count code =
   let result =
     Lwt.catch
@@ -147,19 +180,20 @@ let exec ~count code =
   in
   let ok_message result =
     ignore @@ Py.Module.get_function ocaml_module "after_exec" [||];
-    let new_actions =
+    let new_results =
       match BatIO.close_out !current_output with
-      | "" -> !other_actions
-      | s -> text_data_of_string s :: !other_actions
+      | "" -> !rich_results
+      | s -> Client.Kernel.mime ~ty:"text/plain" s :: !rich_results
     in
-    let actions = List.rev new_actions in
+    let actions = List.rev new_results in
     current_output := BatIO.output_string ();
-    other_actions := [];
+    rich_results := [];
     { Client.Kernel.msg=result
     ; Client.Kernel.actions=actions }
   in
   result >|= Result.map ok_message
 
+(* Produce completions for [str] with cursor at position [pos] *)
 let complete ~pos str =
   let start_pos, completions = get_completions str pos in
   Lwt.return { Client.Kernel.completion_matches = completions
@@ -190,6 +224,8 @@ let get_open_port start_port max_port =
       None
   in iterate_ports start_port
 
+(* Await a value in [ipm_start_signal]; if the value is true, then start the IPM
+ server, else return. *)
 let run_ipm () =
   peek_mvar ipm_start_signal >>= fun try_to_start ->
     if try_to_start then
@@ -226,6 +262,11 @@ for creating embedded domain-specific and general-purpose languages"
   let config = Client_main.mk_config
                  ~usage:"Usage: kernel --connection-file CONNECTION_FILE" () in
   Client_main.main ~config ~kernel:mcore_kernel >>= fun _ ->
-  Lwt_mvar.put ipm_start_signal false
+  if Lwt_mvar.is_empty ipm_start_signal then
+    Lwt_mvar.put ipm_start_signal false
+  else
+    Lwt.return ()
 
+(* Run the kernel and IPM server concurrently, with the IPM server
+  awaiting a signal on [ipm_start_signal] to start. *)
 let main = Lwt_main.run (run_kernel () <&> run_ipm ())

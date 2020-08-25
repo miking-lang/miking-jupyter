@@ -19,6 +19,18 @@ This repository contains a fully featured
 `mi` bootstrap interpreter. It is focused on enabling a large amount
 of interoperability between MCore and Python.
 
+### Repository structure
+
+This section describes where to find the main source files of the repository
+and their purpose.
+
+- The actual kernel implementation can be found in [kernel.ml](src/kernel.ml).
+- [mpl_backend.py](src/mpl_backend.py) contains a `matplotlib` backend for
+  displaying plots produced by `matplotlib` inline in Jupyter Notebooks.
+- [mcore-syntax/main.js](src/mcore-syntax/main.js) contains a Notebook extension
+  for MCore syntax highlighting.
+- The project is built and installed using the [make.sh](./make.sh) script.
+
 ### Jupyter basics
 
 [Jupyter](https://jupyter.org/) provides an ecosystem for writing, documenting
